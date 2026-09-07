@@ -97,13 +97,25 @@ with c4:
         st.session_state.is_running = False
         st.session_state.confidence_history = []
 
+if "speed_select_slider" not in st.session_state:
+    st.session_state.speed_select_slider = "1.0x"
+
 speed_label = st.sidebar.select_slider(
     "Simulation Speed",
     options=["0.5x", "1.0x", "2.0x", "5.0x", "10.0x"],
-    value="1.0x"
+    key="speed_select_slider"
 )
-speed_map = {"0.5x": 0.35, "1.0x": 0.15, "2.0x": 0.08, "5.0x": 0.03, "10.0x": 0.005}
-st.session_state.sim_speed = speed_map[speed_label]
+speed_map = {
+    "0.5x": {"delay": 0.40, "steps": 1},
+    "1.0x": {"delay": 0.15, "steps": 1},
+    "2.0x": {"delay": 0.08, "steps": 2},
+    "5.0x": {"delay": 0.04, "steps": 5},
+    "10.0x": {"delay": 0.01, "steps": 10},
+}
+speed_cfg = speed_map.get(speed_label, speed_map["1.0x"])
+st.session_state.sim_speed = speed_cfg["delay"]
+st.session_state.sim_delay = speed_cfg["delay"]
+st.session_state.sim_steps = speed_cfg["steps"]
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Quick Threat Injections")
@@ -124,33 +136,39 @@ st.session_state.technical_view = st.sidebar.toggle("🔬 Technical View (Formul
 # AUTO-STEPPING WHEN PLAY IS ACTIVE
 # ---------------------------------------------------------
 if st.session_state.is_running:
-    if nav_page == "🎬 Judge Demonstration":
-        if st.session_state.demo_controller.is_finished or st.session_state.demo_controller.digital_twin.current_time >= st.session_state.demo_controller.max_demo_time:
-            st.session_state.is_running = False
-        else:
-            st.session_state.demo_controller.step()
-            if st.session_state.demo_controller.is_finished:
+    steps_to_run = st.session_state.get("sim_steps", 1)
+    for _ in range(steps_to_run):
+        if nav_page == "🎬 Judge Demonstration":
+            if st.session_state.demo_controller.is_finished or st.session_state.demo_controller.digital_twin.current_time >= st.session_state.demo_controller.max_demo_time:
                 st.session_state.is_running = False
-    else:
-        if st.session_state.digital_twin.current_time >= st.session_state.digital_twin.max_time - 1:
-            st.session_state.is_running = False
+                break
+            else:
+                st.session_state.demo_controller.step()
+                if st.session_state.demo_controller.is_finished:
+                    st.session_state.is_running = False
+                    break
         else:
-            st.session_state.sim_engine.step()
             if st.session_state.digital_twin.current_time >= st.session_state.digital_twin.max_time - 1:
                 st.session_state.is_running = False
-    
-    # Record confidence history strictly from live model decision
-    curr_t = st.session_state.digital_twin.current_time
-    last_dec = st.session_state.sage_engine.last_decision
-    if last_dec and last_dec.get("best_prediction"):
-        conf = float(last_dec["best_prediction"].get("confidence", 0.0))
-    elif last_dec and last_dec.get("is_prediction_active"):
-        conf = float(last_dec.get("prediction_confidence", 0.0))
-    else:
-        conf = 0.0
-    st.session_state.confidence_history.append({"time": curr_t, "confidence": conf * 100})
-    if len(st.session_state.confidence_history) > 100:
-        st.session_state.confidence_history.pop(0)
+                break
+            else:
+                st.session_state.sim_engine.step()
+                if st.session_state.digital_twin.current_time >= st.session_state.digital_twin.max_time - 1:
+                    st.session_state.is_running = False
+                    break
+        
+        # Record confidence history strictly from live model decision
+        curr_t = st.session_state.digital_twin.current_time
+        last_dec = st.session_state.sage_engine.last_decision
+        if last_dec and last_dec.get("best_prediction"):
+            conf = float(last_dec["best_prediction"].get("confidence", 0.0))
+        elif last_dec and last_dec.get("is_prediction_active"):
+            conf = float(last_dec.get("prediction_confidence", 0.0))
+        else:
+            conf = 0.0
+        st.session_state.confidence_history.append({"time": curr_t, "confidence": conf * 100})
+        if len(st.session_state.confidence_history) > 100:
+            st.session_state.confidence_history.pop(0)
 
 # ---------------------------------------------------------
 # PAGE 1: LIVE COMMAND CENTER
@@ -508,5 +526,5 @@ else:
 
 # Auto-rerun trigger when simulation is playing
 if st.session_state.is_running:
-    time.sleep(st.session_state.sim_speed)
+    time.sleep(st.session_state.get("sim_delay", 0.15))
     st.rerun()
